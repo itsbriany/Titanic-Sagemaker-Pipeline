@@ -1,4 +1,5 @@
 import re
+from pprint import pformat
 
 import boto3
 from botocore.exceptions import ClientError
@@ -14,6 +15,9 @@ def build_name(endpoint_name, unique_id, suffix):
 
 
 def lambda_handler(event, context):
+    print("Received deployment event:")
+    print(pformat(event))
+
     region = event["region"]
     endpoint_name = event["endpoint_name"]
     instance_type = event["instance_type"]
@@ -23,8 +27,14 @@ def lambda_handler(event, context):
     boto_session = boto3.Session(region_name=region)
     sagemaker_client = boto_session.client("sagemaker")
     endpoint_config_name = build_name(endpoint_name, unique_id, "config")
+    print(
+        f"Preparing deployment for endpoint_name={endpoint_name}, "
+        f"model_name={model_name}, endpoint_config_name={endpoint_config_name}, "
+        f"instance_type={instance_type}, region={region}"
+    )
 
     try:
+        print(f"Creating endpoint config: {endpoint_config_name}")
         sagemaker_client.create_endpoint_config(
             EndpointConfigName=endpoint_config_name,
             ProductionVariants=[
@@ -40,17 +50,39 @@ def lambda_handler(event, context):
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "ValidationException":
             raise
+        print(
+            "Endpoint config creation returned ValidationException; "
+            "continuing because the config may already exist."
+        )
 
     try:
-        sagemaker_client.describe_endpoint(EndpointName=endpoint_name)
+        print(f"Describing endpoint: {endpoint_name}")
+        endpoint_description = sagemaker_client.describe_endpoint(EndpointName=endpoint_name)
+        endpoint_status = endpoint_description.get("EndpointStatus")
+        print(f"Endpoint exists with status: {endpoint_status}")
+
+        if endpoint_status in {"Creating", "Updating", "SystemUpdating", "RollingBack"}:
+            raise RuntimeError(
+                f"Endpoint {endpoint_name} exists but is currently in status "
+                f"{endpoint_status}; retry deployment after it reaches InService or Failed."
+            )
+
+        print(f"Updating endpoint: {endpoint_name}")
         sagemaker_client.update_endpoint(
             EndpointName=endpoint_name,
             EndpointConfigName=endpoint_config_name,
         )
         action = "Updated"
     except ClientError as exc:
-        if exc.response["Error"]["Code"] != "ValidationException":
+        error_code = exc.response["Error"]["Code"]
+        error_message = exc.response["Error"].get("Message", "")
+        print(
+            f"describe/update endpoint raised ClientError: code={error_code}, "
+            f"message={error_message}"
+        )
+        if error_code != "ValidationException":
             raise
+        print(f"Creating endpoint because it was not found: {endpoint_name}")
         sagemaker_client.create_endpoint(
             EndpointName=endpoint_name,
             EndpointConfigName=endpoint_config_name,
