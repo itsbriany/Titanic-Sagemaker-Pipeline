@@ -1,6 +1,6 @@
 # Titanic Pipeline Infrastructure
 
-This CDK app creates the deployment Lambda and its dedicated execution role for the SageMaker pipeline.
+This CDK app creates the deployment Lambda, its dedicated execution role, and an SSM parameter that stores the Lambda ARN for the SageMaker pipeline.
 
 Inside a SageMaker container, `AWS_REGION` is often already available, but `AWS_ACCOUNT_ID` usually is not. The simplest pattern is to export it from the active AWS identity first.
 
@@ -29,9 +29,20 @@ cdk deploy
 
 If you hit a stale asset-packaging issue from an earlier run, remove `infra/cdk.out/` and retry the CDK commands.
 
-After deploy, export the stack output and run the pipeline with it:
+After deploy, the Lambda ARN is stored in SSM Parameter Store at `/titanic-pipeline/deployment-lambda/arn`.
+
+This is a good fit for CI/CD because the pipeline launcher can resolve the current Lambda ARN from a stable parameter name instead of hardcoding a stack output or account-specific ARN.
+
+To run the pipeline from the SageMaker container:
 
 ```bash
-export DEPLOYMENT_LAMBDA_ARN=<stack output DeploymentLambdaArn>
+export DEPLOYMENT_LAMBDA_SSM_PARAMETER=/titanic-pipeline/deployment-lambda/arn
+python pipeline.py
+```
+
+If you prefer, you can still override that lookup explicitly:
+
+```bash
+export DEPLOYMENT_LAMBDA_ARN=<lambda arn>
 python pipeline.py
 ```

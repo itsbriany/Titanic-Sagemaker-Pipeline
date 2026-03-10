@@ -3,6 +3,7 @@ from pathlib import Path
 from aws_cdk import CfnOutput, Duration, Stack
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 
@@ -46,10 +47,25 @@ class TitanicPipelineInfraStack(Stack):
             description="Creates or updates the Titanic SageMaker endpoint from the pipeline.",
         )
 
+        deployment_lambda_parameter = ssm.StringParameter(
+            self,
+            "DeploymentLambdaArnParameter",
+            parameter_name="/titanic-pipeline/deployment-lambda/arn",
+            string_value=deploy_lambda.function_arn,
+            description="Deployment Lambda ARN for the Titanic SageMaker pipeline.",
+        )
+
         CfnOutput(
             self,
             "DeploymentLambdaArn",
             value=deploy_lambda.function_arn,
             description="ARN for the deployment Lambda invoked by the SageMaker pipeline.",
             export_name="TitanicPipelineDeploymentLambdaArn",
+        )
+        CfnOutput(
+            self,
+            "DeploymentLambdaArnParameterName",
+            value=deployment_lambda_parameter.parameter_name,
+            description="SSM parameter storing the deployment Lambda ARN.",
+            export_name="TitanicPipelineDeploymentLambdaArnParameterName",
         )
