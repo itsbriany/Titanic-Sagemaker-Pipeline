@@ -48,6 +48,7 @@ def get_pipeline(
     pipeline_name="TitanicPipeline",
 ):
     boto_session = boto3.Session(region_name=region)
+    source_dir = os.path.dirname(os.path.abspath(__file__))
     sagemaker_session = PipelineSession(
         boto_session=boto_session,
         default_bucket=default_bucket,
@@ -230,7 +231,9 @@ def get_pipeline(
     deploy_model = SKLearnModel(
         model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
         role=role,
+        entry_point="inference.py",
         framework_version="1.2-1",
+        source_dir=source_dir,
         sagemaker_session=sagemaker_session,
     )
     step_create_model = ModelStep(

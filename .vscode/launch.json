@@ -76,6 +76,23 @@
       "env": {
         "AWS_DEFAULT_REGION": "us-east-1"
       }
+    },
+    {
+      "name": "Titanic - Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "tests",
+        "-vv",
+        "-s"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "AWS_DEFAULT_REGION": "us-east-1"
+      }
     }
   ]
 }
