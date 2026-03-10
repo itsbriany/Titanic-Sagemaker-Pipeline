@@ -1,28 +1,54 @@
 import boto3
 import json
+import os
 import sagemaker
 
 from sagemaker.processing import ProcessingInput, ProcessingOutput, ScriptProcessor
+from sagemaker.sklearn.model import SKLearnModel
 from sagemaker.sklearn.estimator import SKLearn
+from sagemaker.workflow.lambda_step import LambdaStep
+from sagemaker.lambda_helper import Lambda
 from sagemaker.workflow.condition_step import ConditionStep
 from sagemaker.workflow.conditions import ConditionGreaterThanOrEqualTo
-from sagemaker.workflow.execution_variables import ExecutionVariables
 from sagemaker.workflow.fail_step import FailStep
 from sagemaker.workflow.functions import Join, JsonGet
+from sagemaker.workflow.model_step import ModelStep
 from sagemaker.workflow.parameters import ParameterInteger, ParameterString
 from sagemaker.workflow.pipeline import Pipeline
+from sagemaker.workflow.pipeline_context import PipelineSession
 from sagemaker.workflow.properties import PropertyFile
 from sagemaker.workflow.steps import ProcessingStep, TrainingStep, CacheConfig
+
+
+def resolve_deployment_lambda_arn(region):
+    direct_arn = os.environ.get("DEPLOYMENT_LAMBDA_ARN")
+    if direct_arn:
+        return direct_arn
+
+    parameter_name = os.environ.get(
+        "DEPLOYMENT_LAMBDA_SSM_PARAMETER",
+        "/titanic-pipeline/deployment-lambda/arn",
+    )
+    if not parameter_name:
+        return ""
+
+    try:
+        ssm_client = boto3.client("ssm", region_name=region)
+        response = ssm_client.get_parameter(Name=parameter_name)
+        return response["Parameter"]["Value"]
+    except Exception:
+        return ""
 
 
 def get_pipeline(
     region="us-east-1",
     role=None,
+    deployment_lambda_arn=None,
     default_bucket="sagemaker-studio-970361933570-9nh5vyj1jvq",
     pipeline_name="TitanicPipeline",
 ):
     boto_session = boto3.Session(region_name=region)
-    sagemaker_session = sagemaker.Session(
+    sagemaker_session = PipelineSession(
         boto_session=boto_session,
         default_bucket=default_bucket,
     )
@@ -53,6 +79,10 @@ def get_pipeline(
     endpoint_name = ParameterString(
         name="EndpointName",
         default_value="titanic-sklearn-endpoint",
+    )
+    deployment_lambda_arn = ParameterString(
+        name="DeploymentLambdaArn",
+        default_value=deployment_lambda_arn or "",
     )
     kfold_splits = ParameterInteger(
         name="KFoldSplits",
@@ -197,47 +227,29 @@ def get_pipeline(
         json_path="binary_classification_metrics.roc_auc",
     )
 
-    deploy_processor = ScriptProcessor(
-        image_uri=sagemaker.image_uris.retrieve(
-            framework="sklearn",
-            region=region,
-            version="1.2-1",
-            instance_type=evaluation_instance_type,
-        ),
-        command=["python3"],
-        instance_type=evaluation_instance_type,
-        instance_count=1,
+    deploy_model = SKLearnModel(
+        model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
         role=role,
+        framework_version="1.2-1",
         sagemaker_session=sagemaker_session,
-        base_job_name=f"{base_job_prefix}-deploy",
+    )
+    step_create_model = ModelStep(
+        name="CreateTitanicModel",
+        step_args=deploy_model.create(instance_type=deployment_instance_type),
     )
 
-    step_deploy = ProcessingStep(
+    deploy_lambda = Lambda(function_arn=deployment_lambda_arn, session=sagemaker_session)
+
+    step_deploy = LambdaStep(
         name="DeployTitanicModel",
-        processor=deploy_processor,
-        job_arguments=[
-            "--region",
-            region,
-            "--role",
-            role,
-            "--model-data",
-            step_train.properties.ModelArtifacts.S3ModelArtifacts,
-            "--image-uri",
-            sagemaker.image_uris.retrieve(
-                framework="sklearn",
-                region=region,
-                version="1.2-1",
-                image_scope="inference",
-                instance_type=deployment_instance_type,
-            ),
-            "--endpoint-name",
-            endpoint_name,
-            "--instance-type",
-            deployment_instance_type,
-            "--execution-id",
-            ExecutionVariables.PIPELINE_EXECUTION_ID,
-        ],
-        code="deploy.py",
+        lambda_func=deploy_lambda,
+        inputs={
+            "region": region,
+            "endpoint_name": endpoint_name,
+            "instance_type": deployment_instance_type,
+            "model_name": step_create_model.steps[0].properties.ModelName,
+        },
+        depends_on=[step_create_model],
     )
 
     deployment_rejected = FailStep(
@@ -261,7 +273,7 @@ def get_pipeline(
             ConditionGreaterThanOrEqualTo(left=f1_score, right=0.7),
             ConditionGreaterThanOrEqualTo(left=roc_auc_score, right=0.83),
         ],
-        if_steps=[step_deploy],
+        if_steps=[step_create_model, step_deploy],
         else_steps=[deployment_rejected],
     )
 
@@ -274,6 +286,7 @@ def get_pipeline(
             evaluation_instance_type,
             deployment_instance_type,
             endpoint_name,
+            deployment_lambda_arn,
             kfold_splits,
         ],
         steps=[
@@ -298,8 +311,16 @@ def validate_pipeline(pipeline):
 if __name__ == "__main__":
     region = boto3.Session().region_name or "us-east-1"
     role = sagemaker.get_execution_role()
-    pipeline = get_pipeline(region=region, role=role)
+    resolved_deployment_lambda_arn = resolve_deployment_lambda_arn(region)
+    pipeline = get_pipeline(
+        region=region,
+        role=role,
+        deployment_lambda_arn=resolved_deployment_lambda_arn,
+    )
     validate_pipeline(pipeline)
     pipeline.upsert(role_arn=role)
-    execution = pipeline.start()
+    start_parameters = {}
+    if resolved_deployment_lambda_arn:
+        start_parameters["DeploymentLambdaArn"] = resolved_deployment_lambda_arn
+    execution = pipeline.start(parameters=start_parameters or None)
     print(f"Started pipeline execution: {execution.arn}")
