@@ -4,6 +4,8 @@ This CDK app creates the deployment Lambda and its dedicated execution role for 
 
 Inside a SageMaker container, `AWS_REGION` is often already available, but `AWS_ACCOUNT_ID` usually is not. The simplest pattern is to export it from the active AWS identity first.
 
+The Lambda code is packaged from `infra/lambda/`. This avoids recursive asset staging through `infra/cdk.out/`, which can otherwise produce repeated nested paths during CDK synthesis.
+
 ## Install AWS CDK
 
 The AWS CDK CLI is a Node.js package. If it is not already installed in your SageMaker container, install it with:
@@ -24,6 +26,8 @@ export AWS_REGION=${AWS_REGION:-$(python -c "import boto3; print(boto3.Session()
 cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 cdk deploy
 ```
+
+If you hit a stale asset-packaging issue from an earlier run, remove `infra/cdk.out/` and retry the CDK commands.
 
 After deploy, export the stack output and run the pipeline with it:
 

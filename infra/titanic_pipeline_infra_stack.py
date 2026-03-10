@@ -38,7 +38,9 @@ class TitanicPipelineInfraStack(Stack):
             "TitanicDeploymentLambda",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="deploy.lambda_handler",
-            code=lambda_.Code.from_asset(str(Path(__file__).resolve().parents[1])),
+            code=lambda_.Code.from_asset(
+                str(Path(__file__).resolve().parent / "lambda")
+            ),
             role=lambda_role,
             timeout=Duration.seconds(60),
             description="Creates or updates the Titanic SageMaker endpoint from the pipeline.",
