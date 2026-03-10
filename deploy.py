@@ -5,6 +5,15 @@ import boto3
 from botocore.exceptions import ClientError
 
 
+def build_name(endpoint_name, execution_id, suffix):
+    sanitized_endpoint = re.sub(r"[^a-zA-Z0-9-]", "-", endpoint_name.lower()).strip("-")
+    sanitized_execution = re.sub(r"[^a-zA-Z0-9-]", "-", execution_id.lower()).strip("-")
+    max_prefix_len = 63 - len(suffix) - 2
+    combined_prefix = f"{sanitized_endpoint}-{sanitized_execution}".strip("-")
+    trimmed_prefix = combined_prefix[:max_prefix_len].strip("-")
+    return f"{trimmed_prefix}-{suffix}"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--region", type=str, default="us-east-1")
@@ -18,9 +27,8 @@ def main():
 
     boto_session = boto3.Session(region_name=args.region)
     sagemaker_client = boto_session.client("sagemaker")
-    execution_suffix = re.sub(r"[^a-zA-Z0-9-]", "-", args.execution_id.lower())
-    model_name = f"{args.endpoint_name}-{execution_suffix[:40]}-model"
-    endpoint_config_name = f"{args.endpoint_name}-{execution_suffix[:40]}-config"
+    model_name = build_name(args.endpoint_name, args.execution_id, "model")
+    endpoint_config_name = build_name(args.endpoint_name, args.execution_id, "config")
 
     sagemaker_client.create_model(
         ModelName=model_name,

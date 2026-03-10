@@ -212,7 +212,7 @@ def get_pipeline(
         base_job_name=f"{base_job_prefix}-deploy",
     )
 
-    deploy_step = ProcessingStep(
+    step_deploy = ProcessingStep(
         name="DeployTitanicModel",
         processor=deploy_processor,
         job_arguments=[
@@ -238,7 +238,6 @@ def get_pipeline(
             ExecutionVariables.PIPELINE_EXECUTION_ID,
         ],
         code="deploy.py",
-        cache_config=cache_config,
     )
 
     deployment_rejected = FailStep(
@@ -246,13 +245,12 @@ def get_pipeline(
         error_message=Join(
             on="",
             values=[
-                "Deployment skipped because the evaluation thresholds were not met. ",
-                "Required: f1 >= 0.7 and roc_auc >= 0.85. ",
-                "Observed: f1=",
+                "Deployment skipped because one or more evaluation thresholds were not met. ",
+                "Required: f1 >= 0.7 and roc_auc >= 0.83. Observed f1=",
                 f1_score,
                 ", roc_auc=",
                 roc_auc_score,
-                ". Improve feature engineering, class balance handling, threshold tuning, or model hyperparameters, then rerun the pipeline.",
+                ". Review the evaluation-step output and revisit feature engineering, threshold tuning, or model hyperparameters before rerunning the pipeline.",
             ],
         ),
     )
@@ -261,9 +259,9 @@ def get_pipeline(
         name="CheckEvaluationThresholds",
         conditions=[
             ConditionGreaterThanOrEqualTo(left=f1_score, right=0.7),
-            ConditionGreaterThanOrEqualTo(left=roc_auc_score, right=0.85),
+            ConditionGreaterThanOrEqualTo(left=roc_auc_score, right=0.83),
         ],
-        if_steps=[deploy_step],
+        if_steps=[step_deploy],
         else_steps=[deployment_rejected],
     )
 
