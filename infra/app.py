@@ -2,9 +2,7 @@
 import os
 
 import aws_cdk as cdk
-
 from titanic_pipeline_infra_stack import TitanicPipelineInfraStack
-
 
 app = cdk.App()
 account = (

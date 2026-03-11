@@ -2,6 +2,12 @@
 
 This CDK app creates the deployment Lambda, its dedicated execution role, and an SSM parameter that stores the Lambda ARN for the SageMaker pipeline.
 
+The deployment contract is:
+
+- Input event: `region`, `endpoint_name`, `instance_type`, `model_name`
+- Behavior: create a fresh endpoint config, then create or update the endpoint
+- Safety check: fail fast if the target endpoint is currently `Creating`, `Updating`, `SystemUpdating`, or `RollingBack`
+
 Inside a SageMaker container, `AWS_REGION` is often already available, but `AWS_ACCOUNT_ID` usually is not. The simplest pattern is to export it from the active AWS identity first.
 
 The Lambda code is packaged from `infra/lambda/`. This avoids recursive asset staging through `infra/cdk.out/`, which can otherwise produce repeated nested paths during CDK synthesis.
@@ -36,6 +42,7 @@ This is a good fit for CI/CD because the pipeline launcher can resolve the curre
 To run the pipeline from the SageMaker container:
 
 ```bash
+export TITANIC_PIPELINE_BUCKET=<your bucket>
 export DEPLOYMENT_LAMBDA_SSM_PARAMETER=/titanic-pipeline/deployment-lambda/arn
 python pipeline.py
 ```

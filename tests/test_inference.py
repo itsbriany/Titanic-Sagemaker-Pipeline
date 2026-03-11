@@ -2,7 +2,6 @@ import json
 import sys
 from pathlib import Path
 
-import joblib
 import pandas as pd
 import pytest
 from sklearn.linear_model import LogisticRegression
@@ -10,7 +9,8 @@ from sklearn.linear_model import LogisticRegression
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from inference import input_fn, model_fn, output_fn, predict_fn
-
+from titanic_pipeline.artifacts import save_model_artifacts
+from titanic_pipeline.preprocessing import preprocess_training_dataframe
 
 RAW_TITANIC_ROWS = [
     {
@@ -56,45 +56,31 @@ RAW_TITANIC_ROWS = [
         "Embarked": "S",
     },
 ]
-
-
-def preprocess_rows(rows):
-    df = pd.DataFrame(rows).copy()
-    df = df.drop(columns=["PassengerId", "Name", "Ticket", "Cabin"], errors="ignore")
-
-    if "Age" in df.columns:
-        df["Age"] = df["Age"].fillna(df["Age"].median())
-    if "Fare" in df.columns:
-        df["Fare"] = df["Fare"].fillna(df["Fare"].median())
-    if "Embarked" in df.columns:
-        df["Embarked"] = df["Embarked"].fillna(df["Embarked"].mode()[0])
-    if "Sex" in df.columns:
-        df["Sex"] = df["Sex"].map({"male": 0, "female": 1}).astype("int64")
-
-    y = df["Survived"].copy()
-    X = df.drop(columns=["Survived"])
-    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
-    X = pd.get_dummies(X, columns=categorical_cols, drop_first=False)
-    return X, y
-
-
 @pytest.fixture
 def trained_artifacts(tmp_path):
-    feature_df, target = preprocess_rows(RAW_TITANIC_ROWS)
+    processed_df, preprocessing_metadata = preprocess_training_dataframe(pd.DataFrame(RAW_TITANIC_ROWS))
+    feature_df = processed_df.drop(columns=["Survived"])
+    target = processed_df["Survived"]
     model = LogisticRegression(max_iter=1000, solver="liblinear", random_state=42)
     model.fit(feature_df, target)
 
     model_dir = tmp_path / "model"
     model_dir.mkdir()
 
-    joblib.dump(model, model_dir / "model.joblib")
-    with open(model_dir / "feature_columns.json", "w", encoding="utf-8") as handle:
-        json.dump(feature_df.columns.tolist(), handle, indent=2)
+    save_model_artifacts(
+        model,
+        str(model_dir),
+        {
+            "feature_columns": feature_df.columns.tolist(),
+            "preprocessing": preprocessing_metadata,
+        },
+    )
 
     return {
         "model_dir": model_dir,
         "feature_df": feature_df,
         "feature_columns": feature_df.columns.tolist(),
+        "raw_df": pd.DataFrame(RAW_TITANIC_ROWS).drop(columns=["Survived"]),
     }
 
 
@@ -110,7 +96,7 @@ def test_model_fn_loads_expected_artifacts(trained_artifacts):
     artifacts = model_fn(str(trained_artifacts["model_dir"]))
 
     assert hasattr(artifacts["model"], "predict")
-    assert artifacts["feature_columns"] == trained_artifacts["feature_columns"]
+    assert artifacts["metadata"]["feature_columns"] == trained_artifacts["feature_columns"]
 
 
 def test_input_fn_accepts_json_payload(trained_artifacts):
@@ -144,6 +130,14 @@ def test_predict_fn_aligns_missing_columns(trained_artifacts):
     assert_valid_prediction(prediction, expected_len=1)
 
 
+def test_predict_fn_accepts_raw_json_rows(trained_artifacts):
+    artifacts = model_fn(str(trained_artifacts["model_dir"]))
+
+    prediction = predict_fn(trained_artifacts["raw_df"].iloc[[0, 1]], artifacts)
+
+    assert_valid_prediction(prediction, expected_len=2)
+
+
 def test_full_inference_hook_chain_json(trained_artifacts):
     artifacts = model_fn(str(trained_artifacts["model_dir"]))
     payload = trained_artifacts["feature_df"].iloc[[0, 1]].to_json(orient="records")
@@ -165,3 +159,11 @@ def test_input_fn_rejects_unsupported_content_type():
 def test_output_fn_rejects_unsupported_accept():
     with pytest.raises(ValueError, match="Unsupported accept type"):
         output_fn({"predictions": [0], "probabilities": [0.1]}, "text/plain")
+
+
+def test_predict_fn_rejects_missing_required_raw_columns(trained_artifacts):
+    artifacts = model_fn(str(trained_artifacts["model_dir"]))
+    malformed = trained_artifacts["raw_df"].iloc[[0]].drop(columns=["Pclass"])
+
+    with pytest.raises(ValueError, match="Missing required raw input columns"):
+        predict_fn(malformed, artifacts)

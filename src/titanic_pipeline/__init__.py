@@ -1,0 +1,2 @@
+"""Titanic pipeline package."""
+
