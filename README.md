@@ -1,10 +1,12 @@
 # Titanic SageMaker Pipeline
 
-Production-style ML pipeline for the Kaggle Titanic dataset: reproducible preprocessing, train/evaluate/deploy separation, SageMaker workflow orchestration, infrastructure as code, and testable inference contracts.
+AWS workflow orchestration and infrastructure automation around a Python machine-learning pipeline. SageMaker coordinates preprocessing, training, evaluation and conditional endpoint deployment; AWS CDK provisions the deployment Lambda, IAM role and SSM configuration.
+
+**Status:** Reference implementation with five local test modules. Current passing tests/CI, a running endpoint and production operational controls have not been established. Dataset acquisition, dependency compatibility and deployment lifecycle behavior require validation.
 
 ## What this project demonstrates
 
-- SageMaker pipeline orchestration for preprocessing, training, evaluation, model registration, and endpoint deployment
+- SageMaker pipeline orchestration for preprocessing, training, evaluation, model creation, and endpoint deployment
 - A canonical model artifact contract that bundles the estimator with feature schema and preprocessing metadata
 - AWS CDK infrastructure for the deployment Lambda used by the pipeline
 - Local test coverage for inference behavior, evaluation/report contracts, pipeline construction, config resolution, and endpoint deployment logic
@@ -45,7 +47,7 @@ To create a local VS Code debugger setup without committing personal settings:
 cp .vscode/launch.example.json .vscode/launch.json
 ```
 
-Run the local preprocessing/train/evaluate flow against the sample data already present in `data/`:
+The repository does not include a data/ directory. Obtain the Kaggle Titanic training CSV under its applicable access terms, create data/ locally and place train.csv there before running the following commands. These commands have not been re-executed in the current audit.
 
 ```bash
 python preprocessing.py --input-dir data --train-dir /tmp/titanic-train --test-dir /tmp/titanic-test --meta-dir /tmp/titanic-meta
@@ -54,6 +56,14 @@ python evaluate.py --model-dir /tmp/titanic-model --test-dir /tmp/titanic-test -
 ```
 
 ## AWS workflow
+
+### AWS prerequisites and deployment outcome
+
+The CDK application provisions the deployment Lambda, its IAM role and an SSM parameter. It does not create the pipeline S3 bucket, upload the dataset or supply the SageMaker execution role. Configure those prerequisites and AWS credentials explicitly before invoking the pipeline.
+
+prepare_s3.py creates prefix markers; it does not upload the dataset. The current pipeline resolves a SageMaker execution role and SSM configuration, including for --validate-only; that option is not a fully offline validation mode.
+
+The deployment Lambda submits endpoint creation/update asynchronously. Returning from that Lambda does not verify that the endpoint reached InService. Readiness checks, precise validation-error handling, retry idempotency, cleanup and rollback remain improvement areas.
 
 Required environment variables:
 
@@ -91,5 +101,5 @@ python pipeline.py --validate-only
 
 ## Repository notes
 
-- `data/` is treated as local sample material for development and demo purposes, not as the source of truth for production artifacts.
+- data/ is a local input directory you must create; sample datasets are not bundled in this repository.
 - The deployed endpoint management logic lives in [`infra/lambda/deploy.py`](./infra/lambda/deploy.py).
